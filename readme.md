@@ -1,144 +1,60 @@
-# Lab 1: Implementing API Validation
+# Lab 1: HealthcareApi Validation
 
-- Duration: ~1 hour
-- Context: You are consultants working with a state healthcare provider. They want a Web API where patients can book appointments, but they are especially concerned about bad or malicious data being sent into their system. Your job is to implement validation on the API’s DTOs to ensure clean, safe input.
-
----
-
-#### Learning Objectives
-
-* Decorate DTO properties with built-in validation attributes (`[Required]`, `[StringLength]`, `[Range]`) to enforce common data constraints.
-* Check the `ModelState.IsValid` property within controller actions to programmatically handle validation failures and return appropriate 400 Bad Request responses.
-* Implement a custom validation attribute by inheriting from `ValidationAttribute` and overriding the `IsValid` method to contain complex business logic.
-* Develop a class-level validation attribute to perform validation that depends on multiple properties of a single model.
-* Compare and contrast the use of data annotation attributes versus a library like FluentValidation for managing complex rule sets.
-* Analyze how robust model validation serves as a primary defense against common security vulnerabilities like mass assignment attacks.
-
-
----
-
-#### Starter Project
-
-You are given a simple ASP.NET Core Web API project:
-
-```
-/HealthcareApi
-  /Controllers
-    AppointmentsController.cs   // TODO: Add endpoints with validation
-  /Models
-    AppointmentDto.cs           // TODO: Add validation attributes
-  Program.cs                    // Preconfigured with minimal API + Swagger
-  README.md
+```bash
+dotnet run
 ```
 
-The API has an in-memory list of appointments but currently does not validate inputs.
+Swagger UI opens at `http://localhost:5000/swagger`.
 
----
+## Endpoints
 
-#### Tasks
+All in `Controllers/AppointmentsController.cs`.
 
-#### 1. Test Current Behavior (5 min)
+* `GET /api/appointments`: all appointments, 200
+* `POST /api/appointments`: validates via `ModelState.IsValid`, 400 with error dictionary on failure, 200 with assigned `Id` on success
 
-Goal: See what happens when we send invalid data to an API without validation.
+## Validation
 
-* Run the project and open Swagger UI
-* Try to POST an appointment with invalid data:
-  * Missing `PatientName` (send empty string or null)
-  * Invalid email format (e.g., "not-an-email")
-  * Past date (e.g., yesterday)
-  * Invalid duration (e.g., 999 minutes or -5)
-* Observe what happens:
-  * Does the API accept the bad data? (It should!)
-  * What status code do you get? (Probably 200 OK)
-  * Does the appointment get added to the list?
-  * What problems could this cause for the healthcare system?
+* Built-in attributes: `Models/AppointmentDto.cs`, `[Required]`/`[StringLength(100)]` on `PatientName`, `[Required]`/`[EmailAddress]` on `Email`, `[Required]`/`[Range(15, 120)]` on `DurationMinutes`
+* `ModelState.IsValid` check: `Controllers/AppointmentsController.cs`, `CreateAppointment`
+* Property-level custom attribute: `Models/FutureDateAttribute.cs`, applied to `Date`
+* Class-level custom attribute: `Models/BusinessHoursForLongAppointmentsAttribute.cs`, applied to `AppointmentDto`, rejects appointments over 60 minutes booked outside 9am–5pm
 
-Checkpoint: What problems do you see with the current API behavior? Why is this dangerous for a healthcare system?
+## Curl requests for Manual Tests
 
----
+```bash
+curl http://localhost:5000/api/appointments
 
-#### 2. Add Built-In Validation Attributes (15 min)
+curl -i -X POST http://localhost:5000/api/appointments -H "Content-Type: application/json" -d '{"patientName":"Jane Doe","email":"jane@example.com","date":"2026-10-01T10:00:00","durationMinutes":30}'
 
-Open `AppointmentDto.cs` and enforce common constraints using data annotations:
+curl -i -X POST http://localhost:5000/api/appointments -H "Content-Type: application/json" -d '{"patientName":"","email":"jane@example.com","date":"2026-10-01T10:00:00","durationMinutes":30}'
 
-* `PatientName` → required, max length 100
-* `Email` → required, valid email format
-* `Date` → required, must be a future date (custom logic later)
-* `DurationMinutes` → required, between 15 and 120
+curl -i -X POST http://localhost:5000/api/appointments -H "Content-Type: application/json" -d '{"patientName":"Jane Doe","email":"not-an-email","date":"2026-10-01T10:00:00","durationMinutes":30}'
 
-👉 Look up “ASP.NET Core data annotations” for the exact attribute names.
+curl -i -X POST http://localhost:5000/api/appointments -H "Content-Type: application/json" -d '{"patientName":"Jane Doe","email":"jane@example.com","date":"2025-01-01T10:00:00","durationMinutes":30}'
 
-Checkpoint: Try POSTing invalid data in Swagger (e.g. missing name). Does the framework automatically reject it?
+curl -i -X POST http://localhost:5000/api/appointments -H "Content-Type: application/json" -d '{"patientName":"Jane Doe","email":"jane@example.com","date":"2026-10-01T10:00:00","durationMinutes":999}'
 
----
+curl -i -X POST http://localhost:5000/api/appointments -H "Content-Type: application/json" -d '{"patientName":"Jane Doe","email":"jane@example.com","date":"2026-10-01T08:00:00","durationMinutes":90}'
 
-#### 3. Check `ModelState.IsValid` (10 min)
+curl -i -X POST http://localhost:5000/api/appointments -H "Content-Type: application/json" -d '{"patientName":"Jane Doe","email":"jane@example.com","date":"2026-10-01T10:00:00","durationMinutes":90}'
+```
 
-In `AppointmentsController.cs`, update the POST action:
+| Case | Result |
+|---|---|
+| GET all | 200 |
+| POST valid, 30 min | 200, appointment added with assigned `Id` |
+| POST missing `PatientName` | 400, error on `PatientName` |
+| POST invalid email | 400, error on `Email` |
+| POST past date | 400, `FutureDate` error on `Date` |
+| POST `DurationMinutes = 999` | 400, `Range` error on `DurationMinutes` |
+| POST 90 min at 8am | 400, `BusinessHoursForLongAppointments` error on `Date` |
+| POST 90 min at 10am | 200, appointment added |
 
-* Before processing, check `ModelState.IsValid`.
-* If invalid, return 400 Bad Request with the model state errors.
+## Quick Reflection
 
-👉 Hint: Search “ModelState.IsValid ASP.NET Core Web API example”.
+**Easiest to implement:** Built-in data annotations (`AppointmentDto.cs`). Declarative, framework wires them into `ModelState` automatically. `FutureDateAttribute.cs` took more work: inherit `ValidationAttribute`, override `IsValid`, write the comparison by hand.
 
-Checkpoint: Send an appointment with `DurationMinutes = 999`. Do you see a 400 error?
+**FluentValidation:** Rules move to a separate `AppointmentDtoValidator` class instead of attributes on the model. Easier to unit test in isolation, easier to swap rules per environment without touching the DTO.
 
----
-
-#### 4. Custom Property-Level Validation (15 min)
-
-Create a custom attribute `FutureDateAttribute`:
-
-* Inherit from `ValidationAttribute`.
-* Override `IsValid`.
-* Ensure the appointment date is greater than `DateTime.Now`.
-
-Apply it to the `Date` property in `AppointmentDto`.
-
-Checkpoint: Test with past and future dates. Do you get the right validation errors?
-
----
-
-#### 5. Custom Class-Level Validation (10 min)
-
-Sometimes validation depends on multiple properties. Add a new rule:
-
-* Appointments longer than 60 minutes can only be booked between 9am and 5pm.
-* Implement this as a class-level attribute on `AppointmentDto`.
-
-👉 Hint: Create an attribute that implements `IValidatableObject` or a class-level `ValidationAttribute`.
-
-Checkpoint: Try posting a 90-minute appointment at 8am. Do you see an error?
-
----
-
-#### 6. Reflection: Data Annotations vs FluentValidation (5 min)
-
-In the PR description, reflect on:
-
-* What’s good about data annotations (quick, built-in, close to the model)?
-* What limitations might push you to FluentValidation (complex rules, externalised logic)?
-
-You don’t have to implement FluentValidation now — just think critically.
-
----
-
-#### Stretch Goals
-
-* Implement FluentValidation for `AppointmentDto` and compare error messages.
-* Add a global filter that automatically returns validation errors without needing `ModelState.IsValid` in each controller.
-* Research “mass assignment attacks” and add notes on how validation helps mitigate them.
-
----
-
-#### Deliverables
-
-* `AppointmentDto` decorated with validation attributes.
-* `AppointmentsController` POST action checking `ModelState.IsValid`.
-* A working custom property-level attribute (`FutureDateAttribute`).
-* A class-level attribute validating multiple properties.
-* A pull request with reflective answers to:
-
-  1. Which validation approach was easiest to implement?
-  2. How could FluentValidation improve rule management?
-  3. Why is robust validation important for API security?
+**Why it matters for API security:** Validation runs at model binding, before `CreateAppointment` executes. Bad durations, malformed emails, and past dates never reach the in-memory store. Before this lab, `ModelState.IsValid` was never checked, so any payload was accepted as-is.

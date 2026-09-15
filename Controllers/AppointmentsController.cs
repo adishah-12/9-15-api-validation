@@ -18,9 +18,12 @@ public class AppointmentsController : ControllerBase
     [HttpPost]
     public ActionResult<AppointmentDto> CreateAppointment(AppointmentDto appointment)
     {
-        // TODO: Add ModelState.IsValid check here
-        
-        // Assign a simple ID (this is bad practice - just for demo)
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        // Assign a simple ID (bad)
         appointment.Id = Appointments.Count + 1;
         Appointments.Add(appointment);
         
